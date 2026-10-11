@@ -1,0 +1,9 @@
+apiVersion: v1 
+kind: Secret
+metadata:
+  name: db-access
+  namespace: api-homolog
+type: Opaque
+data:
+  db.user: ZGJhLnVzdWFyaW9z
+  db.password: KmRiQS51c3Vhcmlvc0AyMDI2Kg==

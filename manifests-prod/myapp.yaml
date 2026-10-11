@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fast-apiweb
+  labels:
+    apps: v1 
+  namespace: api-prod
+  annotations:
+    kubernetes.io/change-cause: "app-version: v1"
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate 
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  revisionHistoryLimit: 7
+  selector:
+    matchLabels:
+      apps: v1 
+  template:
+    metadata:
+      labels:
+        apps: v1 
+    spec:
+      hostname: apiweb
+      hostAliases:
+        - ip: '192.168.124.23'
+          hostnames:
+            - 'mysqlsrv.mydomain.intra'
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: FUNCTION
+                    operator: In
+                    values:
+                      - WORKERNODE01
+                      - WORKERNODE02
+      dnsConfig:
+        options:
+          - name: ndots
+            value: '3'
+      initContainers:
+        - image: busybox:latest
+          name: wait-mysql
+          command: ['/bin/sh']
+          args:
+            - -c 
+            - |
+              sleep 5
+              nc -vz mysqlsrv.mydomain.intra 3306
+          resources:
+            limits:
+              cpu: '100m'
+              memory: '100Mi'
+      imagePullSecrets:
+        - name: private-registry
+      terminationGracePeriodSeconds: 15
+      volumes:
+        - name: data 
+          persistentVolumeClaim:
+            claimName: pvc-pdf
+      containers:
+        - image: gitlab.mydomain.com.br:5050/trabalho/fastapi:826a8f61
+          name: api
+          resources:
+            limits:
+              cpu: '300m'
+              memory: '512Mi'
+            requests:
+              cpu: '100m'
+              memory: '80Mi'
+          ports:
+            - name: fastapi-port 
+              containerPort: 8000
+          resizePolicy:
+            - resourceName: cpu
+              restartPolicy: NotRequired
+            - resourceName: memory
+              restartPolicy: NotRequired
+          env:
+            - name: TZ
+              value: 'America/Sao_Paulo'
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-access
+                  key: db.user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-access
+                  key: db.password
+            - name: DB_HOST
+              value: 'mysqlsrv.mydomain.intra'
+            - name: DB_NAME 
+              value: 'usuarios'
+          volumeMounts:
+            - name: data
+              mountPath: /data/
+          startupProbe:
+            httpGet:
+              port: 8000
+              path: /healthz
+            initialDelaySeconds: 40
+            timeoutSeconds: 5
+            failureThreshold: 1
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              port: 8000
+              path: /livez
+            initialDelaySeconds: 60
+            periodSeconds: 300
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-svc 
+  namespace: api-prod
+spec:
+  type: ClusterIP
+  selector:
+    apps: v1
+  ports:
+    - name: fastapi-port 
+      port: 80
+      targetPort: 8000
+      protocol: TCP

@@ -1,93 +1,308 @@
-# fastapi
+# 🚀 FastAPI DevSecOps — CI/CD com GitLab e Kubernetes
 
+Projeto de automação de CI/CD para uma aplicação FastAPI, integrando práticas de DevSecOps, análise de vulnerabilidades, construção e publicação de imagens Docker, validação de manifests e deploy automatizado em Kubernetes.
 
+O objetivo é demonstrar a implementação prática de um pipeline de entrega contínua com controles de qualidade e segurança, separação entre homologação e produção e automação do ciclo de entrega da aplicação.
 
-## Getting started
+## 🎯 Objetivos do projeto
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+- Automatizar o processo de integração e entrega contínua.
+- Implementar análise estática de código Python.
+- Identificar vulnerabilidades em arquivos e dependências da aplicação.
+- Construir e publicar imagens Docker versionadas.
+- Validar manifests Kubernetes antes da implantação.
+- Automatizar o deploy da aplicação em Kubernetes.
+- Executar testes dinâmicos de segurança com OWASP ZAP.
+- Separar os fluxos de homologação e produção.
+- Implementar controles manuais em etapas críticas do pipeline.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## 🏗️ Arquitetura do pipeline
 
-## Add your files
+```mermaid
+flowchart TD
+    A[Push no GitLab] --> B{Branch}
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+    B -->|api-homolog| C[Pipeline de Homologação]
+    B -->|main| P[Pipeline de Produção]
 
+    C --> D[Flake8 - Qualidade de Código]
+    D --> E[Trivy - Análise de Vulnerabilidades]
+    E --> F[Build da Imagem Docker]
+    F --> G[Push para Container Registry]
+    G --> H[Validação dos Manifests]
+    H --> I[Deploy em Kubernetes]
+    I --> J[OWASP ZAP - DAST]
+
+    P --> K[Aprovação Manual]
+    K --> L[Aplicação dos Recursos de Produção]
+    L --> M[Deploy de Produção]
+
+    style E fill:#d97706,color:#ffffff
+    style J fill:#b91c1c,color:#ffffff
+    style M fill:#15803d,color:#ffffff
 ```
-cd existing_repo
-git remote add origin http://gitlab.mydomain.com.br/trabalho/fastapi.git
-git branch -M main
-git push -uf origin main
+
+O pipeline é organizado em dois fluxos principais:
+
+- **Homologação:** análise do código, verificação de vulnerabilidades, build e publicação da imagem, validação dos manifests, deploy e testes dinâmicos de segurança.
+- **Produção:** fluxo separado, acionado por push na branch `main`, com uma etapa manual antes da aplicação dos recursos de produção.
+
+## 🛠️ Tecnologias utilizadas
+
+| Tecnologia | Finalidade |
+|---|---|
+| Python 3.11 | Ambiente de execução e análise do código |
+| FastAPI | Framework para desenvolvimento da API |
+| GitLab CI/CD | Orquestração do pipeline |
+| Flake8 | Análise estática e qualidade do código Python |
+| Trivy | Análise de vulnerabilidades em arquivos e dependências |
+| Docker | Construção e empacotamento da aplicação |
+| GitLab Container Registry | Armazenamento das imagens de contêiner |
+| Kubernetes | Orquestração e execução da aplicação |
+| kubectl | Gerenciamento dos recursos Kubernetes |
+| Kustomize | Aplicação de configurações Kubernetes |
+| OWASP ZAP | Testes dinâmicos de segurança (DAST) |
+| Mermaid | Documentação visual da arquitetura |
+
+## ⚙️ Etapas do CI/CD
+
+### 1. Análise de qualidade — Flake8
+
+O job `test_code` executa o Flake8 sobre o arquivo principal da aplicação.
+
+**Objetivos:**
+- Identificar problemas de estilo e qualidade do código.
+- Detectar possíveis erros e inconsistências.
+- Estabelecer uma verificação inicial antes das próximas etapas.
+
+A execução está configurada como manual no fluxo de homologação.
+
+### 2. Análise de vulnerabilidades — Trivy
+
+O job `library_scanner` executa o Trivy para analisar o diretório da aplicação.
+
+Severidades configuradas:
+
+- `HIGH`
+- `CRITICAL`
+
+A execução gera um relatório JSON, armazenado como artefato do GitLab CI/CD, inclusive quando o job falha.
+
+O scanner utiliza um código de saída diferente de zero quando encontra vulnerabilidades correspondentes às severidades configuradas.
+
+**Objetivo:** identificar vulnerabilidades conhecidas no conteúdo analisado antes da construção da imagem Docker.
+
+> Observação: a configuração atual utiliza `trivy fs app/`. Isso não equivale a uma análise completa da imagem Docker final.
+
+### 3. Construção da imagem Docker
+
+O job `build_image` realiza a construção da imagem usando o Dockerfile do projeto.
+
+A imagem local recebe uma tag baseada no identificador curto do commit:
+
+```text
+local:<commit-sha>
 ```
 
-## Integrate with your tools
+Esse modelo facilita a rastreabilidade entre o código-fonte e o artefato gerado.
 
-- [ ] [Set up project integrations](http://gitlab.mydomain.com.br/trabalho/fastapi/-/settings/integrations)
+### 4. Publicação no Container Registry
 
-## Collaborate with your team
+O job `push_image` marca a imagem e publica o artefato no registry configurado.
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+O padrão de nomenclatura utilizado é:
 
-## Test and Deploy
+```text
+<registry>/<namespace>/<aplicacao>:<commit-sha>
+```
 
-Use the built-in continuous integration in GitLab.
+O uso de tags vinculadas ao commit facilita a identificação da versão publicada e a investigação de problemas em implantações.
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+As credenciais de acesso devem ser armazenadas em variáveis protegidas do GitLab CI/CD, nunca diretamente no repositório.
 
-***
+### 5. Validação dos manifests Kubernetes
 
-# Editing this README
+O job `validate_manifests` utiliza o `kubectl` para realizar validações antes da implantação.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Os recursos contemplados incluem:
 
-## Suggestions for a good README
+- ResourceQuota da aplicação.
+- HTTPRoute para roteamento HTTP.
+- Workloads da aplicação.
+- Credenciais para acesso ao registry.
+- Volumes e configurações relacionadas ao armazenamento.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+A configuração atual utiliza `kubectl apply --dry-run=client`, que executa validações no cliente. Essa abordagem ajuda a identificar determinados problemas de configuração, mas não substitui a validação pelo API Server do Kubernetes.
 
-## Name
-Choose a self-explaining name for your project.
+### 6. Deploy automatizado em Kubernetes
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+O job `deploy_application` atualiza a referência da imagem e aplica os recursos Kubernetes utilizando Kustomize.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Fluxo de execução:
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+1. Identificação da imagem vinculada ao commit.
+2. Atualização da tag no manifesto da aplicação.
+3. Aplicação dos recursos definidos na configuração do ambiente.
+4. Disponibilização da nova versão conforme o comportamento dos workloads Kubernetes.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Essa abordagem reduz intervenções manuais e facilita a rastreabilidade das versões implantadas.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### 7. Testes dinâmicos de segurança — OWASP ZAP
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+O job `dast_scan` executa o OWASP ZAP Baseline contra a aplicação implantada em homologação.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+O objetivo é identificar possíveis problemas de segurança observáveis por meio de requisições HTTP à aplicação em execução.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+O pipeline aguarda um intervalo após o deploy antes de iniciar o scanner.
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+**Importante:** o job está configurado com `allow_failure: true`. Portanto, falhas no DAST não bloqueiam necessariamente o pipeline. O ZAP Baseline também não substitui um teste de invasão completo.
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+### 8. Fluxo de produção
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+O fluxo de produção é acionado por push na branch `main`.
 
-## License
-For open source projects, say how it is licensed.
+O job `check_manifests_prod` está configurado para execução manual e aplica os recursos Kubernetes definidos em `manifests-prod/`.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Após o sucesso dessa etapa, o job `deploy_prod` executa a aplicação da configuração de produção via Kustomize.
+
+Esse fluxo introduz um ponto de controle manual antes das alterações no ambiente produtivo.
+
+Para garantir a integridade da entrega, o fluxo deve assegurar que a imagem implantada em produção corresponda exatamente ao artefato aprovado e publicado anteriormente.
+
+## 📂 Estrutura do repositório
+
+Estrutura ilustrativa baseada nos caminhos encontrados no pipeline:
+
+```text
+.
+├── app/
+│   ├── app.py
+│   └── requirements.txt
+├── manifests/
+│   ├── application-quota.yaml
+│   ├── http-route.yaml
+│   ├── myapp.yaml
+│   ├── repo-secret.yaml
+│   └── volumes.yaml
+├── manifests-prod/
+│   ├── db-access.yaml
+│   ├── httproute.yaml
+│   ├── repo-secret.yaml
+│   ├── volumes.yaml
+│   └── myapp.yaml
+├── Dockerfile
+├── .gitlab-ci.yml
+└── README.md
+```
+
+A estrutura deve ser ajustada caso os diretórios ou arquivos reais do repositório sejam diferentes.
+
+## 🔐 Configuração de variáveis no GitLab
+
+Configure as variáveis necessárias em:
+
+**GitLab → Settings → CI/CD → Variables**
+
+| Variável | Finalidade |
+|---|---|
+| `REPOLABPASS` | Senha ou token de acesso ao Container Registry |
+| `KUBENEXT` | Conteúdo da configuração de acesso ao Kubernetes |
+
+O usuário do registry está definido diretamente no YAML atual. Como melhoria, ele também pode ser transferido para uma variável de CI/CD.
+
+**Boas práticas de segurança:**
+
+- Utilizar variáveis mascaradas e protegidas quando aplicável.
+- Restringir credenciais de produção a branches e ambientes autorizados.
+- Utilizar contas de serviço Kubernetes com privilégios mínimos.
+- Evitar a exposição de tokens e arquivos kubeconfig nos logs.
+- Não versionar credenciais, chaves privadas ou senhas.
+- Separar as permissões de homologação das permissões de produção.
+
+## 📋 Pré-requisitos
+
+Para reproduzir o ambiente, são necessários:
+
+- Projeto GitLab com CI/CD habilitado.
+- GitLab Runners configurados com as tags e os ambientes de execução utilizados pelo pipeline.
+- Runner com capacidade de executar builds Docker.
+- Container Registry acessível pelo ambiente de build.
+- Cluster Kubernetes com permissões para aplicar os recursos necessários.
+- Configuração de acesso ao cluster disponibilizada de forma segura.
+- Código-fonte da aplicação e arquivo de dependências.
+- Dockerfile e manifests Kubernetes.
+- Configuração Kustomize válida para os diretórios utilizados no deploy.
+
+## ▶️ Como executar
+
+### Homologação
+
+Envie alterações para a branch `api-homolog`:
+
+```bash
+git checkout api-homolog
+git add .
+git commit -m "Atualiza aplicação"
+git push origin api-homolog
+```
+
+O GitLab identificará a branch e iniciará o fluxo de homologação conforme as regras do pipeline.
+
+O job de qualidade está configurado como manual. As etapas seguintes dependem das regras e das dependências definidas no YAML.
+
+### Produção
+
+Envie a versão aprovada para a branch `main`:
+
+```bash
+git checkout main
+git merge api-homolog
+git push origin main
+```
+
+O GitLab iniciará o fluxo de produção, que inclui uma etapa manual para aplicar os recursos produtivos.
+
+Antes de utilizar esse procedimento em um ambiente real, estabeleça políticas adequadas de revisão, autorização, testes, rastreabilidade e rollback.
+
+## 🛡️ Práticas de DevSecOps implementadas
+
+O projeto integra diferentes controles ao ciclo de entrega:
+
+- **Qualidade de código:** análise inicial com Flake8.
+- **Análise de vulnerabilidades:** verificação com Trivy.
+- **Containerização:** empacotamento da aplicação com Docker.
+- **Rastreabilidade:** tags de imagem vinculadas ao commit.
+- **Validação de configuração:** verificações de manifests Kubernetes.
+- **Segurança dinâmica:** análise HTTP com OWASP ZAP.
+- **Controle de produção:** etapa manual antes da aplicação de recursos produtivos.
+- **Automação de deploy:** aplicação de configurações Kubernetes pelo pipeline.
+
+## 🚧 Melhorias futuras
+
+Algumas evoluções recomendadas para fortalecer a segurança e a confiabilidade do pipeline:
+
+- Adicionar testes automatizados unitários e de integração com pytest.
+- Publicar relatórios de testes e cobertura.
+- Incluir análise estática de segurança (SAST) dedicada.
+- Adicionar detecção de segredos no código-fonte.
+- Executar scan Trivy sobre a imagem Docker construída.
+- Gerar SBOM para cada versão publicada.
+- Implementar políticas de bloqueio para vulnerabilidades críticas.
+- Promover o mesmo artefato imutável de homologação para produção.
+- Validar manifests também no API Server Kubernetes.
+- Adicionar verificações de saúde após o deploy.
+- Implementar estratégias de rollback.
+- Configurar ambientes protegidos e políticas formais de aprovação.
+- Separar credenciais e permissões por ambiente.
+
+## 📌 Considerações finais
+
+Este projeto demonstra a aplicação prática de automação de CI/CD e princípios de DevSecOps, integrando ferramentas de qualidade, análise de vulnerabilidades, containerização, orquestração e testes dinâmicos de segurança.
+
+A proposta é evoluir continuamente o processo de entrega, buscando maior rastreabilidade, repetibilidade, segurança e confiabilidade operacional.
+
+**Tecnologias principais:** Python · FastAPI · GitLab CI/CD · Docker · Kubernetes · Trivy · OWASP ZAP
+
+---
+
+*Projeto desenvolvido para fins de estudo, experimentação e demonstração de práticas de automação, infraestrutura e segurança no ciclo de entrega de aplicações.*

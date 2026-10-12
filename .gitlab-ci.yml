@@ -1,0 +1,264 @@
+variables:
+  TAG: $CI_COMMIT_SHORT_SHA
+  LOCAL: local:$TAG
+  REPO: gitlab.mydomain.com.br:5050/trabalho/fastapi:$TAG
+
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "api-homolog" && $CI_PIPELINE_SOURCE == "push"'
+      variables:
+        PIPELINE_TYPE: "HOM"
+
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      variables:
+        PIPELINE_TYPE: "PROD"
+
+    - when: never
+
+
+stages:
+  - lint
+  - sca
+  - build
+  - push
+  - validate
+  - deploy
+  - dast
+  - merge-to-main
+  - deploy_prod
+
+test_code:
+  rules:
+    - if: '$PIPELINE_TYPE == "HOM"'
+      when: manual
+    - when: never 
+  tags:
+    - image-test
+  stage: lint
+  image:
+    name: python:3.11-slim
+  before_script:
+    - |
+      cd app/
+      pip install -r requirements.txt
+  script:
+    - flake8 app.py
+  after_script:
+    - |
+      if [[ $CI_JOB_STATUS == 'success' ]]; then 
+        echo -e "\e[34;1mLINT CODE EXECUTADO COM SUCESSO!!!\e[m"
+      else
+        echo -e "\e[31;1mERRO AO ANALISAR CÓDIGO FONTE!!!\e[m"
+      fi
+
+
+library_scanner:
+  rules:
+    - if: '$PIPELINE_TYPE == "HOM"'
+      when: on_success
+    - when: never
+  tags:
+    - image-test 
+  stage: sca
+  needs:
+    - test_code
+  image:
+    name: aquasec/trivy:0.74.0
+    entrypoint: [""]
+  script:
+    - |
+      trivy fs app/ --severity HIGH,CRITICAL --no-progress --exit-code 1 --format json --output trivy-report.json
+  after_script:
+    - |
+      if [[ $CI_JOB_STATUS == 'success' ]]; then 
+        echo -e "\e[34;1mSCA EXECUTADO COM SUCESSO!!!\e[m"
+      else
+        echo -e "\e[31;1mVULNERABILIDADES ENCONTRADAS!!!\e[m"
+      fi
+  artifacts:
+    when: always 
+    paths:
+      - trivy-report.json
+    expire_in: 1 hour
+
+
+build_image:
+  rules:
+    - if: '$PIPELINE_TYPE == "HOM"'
+      when: on_success
+    - when: never 
+  tags:
+    - docker-ci 
+  stage: build 
+  needs:
+    - library_scanner
+  script:
+    - |
+      docker build -t $LOCAL .
+  after_script:
+    - |
+      if [[ $CI_JOB_STATUS == 'success' ]]; then 
+        echo -e "\e[34;1mBUILD CONCLUIDO COM SUCESSO!!!\e[m"
+      else 
+        echo -e "\e[31;1mERRO AO REALIZAR BUILD DA IMAGEM!!!\e[m"
+      fi
+
+
+push_image:
+  rules:
+    - if: '$PIPELINE_TYPE == "HOM"'
+      when: on_success
+    - when: never 
+  tags:
+    - docker-ci 
+  stage: push 
+  needs:
+    - build_image
+  variables:
+    USER: matheus.alexandre
+  before_script:
+    - |
+      docker login gitlab.mydomain.com.br:5050 -u $USER -p $REPOLABPASS
+  script:
+    - |
+      docker image tag $LOCAL $REPO
+      docker image push $REPO
+  after_script:
+    - |
+      if [[ $CI_JOB_STATUS == 'success' ]]; then
+        docker rmi $LOCAL 
+        docker rmi $REPO
+      else
+        docker rmi $LOCAL 
+        docker rmi $REPO
+      fi
+
+validate_manifests:
+  rules:
+    - if: '$PIPELINE_TYPE == "HOM"'
+      when: on_success
+    - when: never 
+  tags:
+    - image-test 
+  stage: validate
+  needs:
+    - push_image
+  image: 
+    name: matheustux/kubectl:1.0
+  before_script:
+    - |
+      cat $KUBENEXT > /config 
+      export KUBECONFIG=/config
+  script:
+    - |
+      kubectl apply -f manifests/application-quota.yaml --dry-run=client
+      kubectl apply -f manifests/http-route.yaml --dry-run=client
+      kubectl apply -f manifests/myapp.yaml --dry-run=client 
+      kubectl apply -f manifests/repo-secret.yaml --dry-run=client
+      kubectl apply -f manifests/volumes.yaml --dry-run=client
+
+
+deploy_application:
+  rules:
+    - if: '$PIPELINE_TYPE == "HOM"'
+      when: on_success
+    - when: never
+  tags:
+    - image-test
+  stage: deploy
+  needs:
+    - validate_manifests
+  image:
+    name: matheustux/kubectl:1.0
+  before_script:
+    - |
+      cat $KUBENEXT > /config 
+      export KUBECONFIG=/config
+  script:
+    - |
+      echo -e "\e[34;1mATUALIZANDO VERSÃO DA IMAGEM\e[m"
+
+      sed -ri "s|fastapi:.*|fastapi:${TAG}|" manifests/myapp.yaml
+      kubectl apply -k manifests/
+  after_script:
+    - |
+      if [[ $CI_JOB_STATUS == 'success' ]]; then 
+        echo -e "\e[34;1mDEPLOY RELIZADO COM SUCESSO!!!\e[m"
+      else 
+        echo -e "\e[31;1mERRO AO REALIZAR DEPLOY!\e[m"
+      fi
+
+dast_scan:
+  rules:
+    - if: '$PIPELINE_TYPE == "HOM"'
+      when: on_success
+    - when: never
+  stage: dast 
+  tags:
+    - image-test
+  needs:
+    - deploy_application
+  image:
+    name: zaproxy/zap-stable:2.17.0
+    entrypoint: [""]
+  script:
+    - |
+      echo -e "\e[34;1mREALIZANDO TESTE DAST...\e[m"
+      sleep 70
+      /zap/zap-baseline.py -t http://useradd.mydomain.intra -I
+  allow_failure: true
+
+
+check_manifests_prod:
+  rules:
+    - if: '$PIPELINE_TYPE == "PROD"'
+      when: manual
+    - when: never
+  stage: merge-to-main
+  tags:
+    - image-test
+  image:
+    name: matheustux/kubectl:1.0
+  before_script:
+    - |
+      cat $KUBENEXT > /config
+      export KUBECONFIG=/config
+  script:
+    - |
+      kubectl apply -f manifests-prod/db-access.yaml 
+      kubectl apply -f manifests-prod/httproute.yaml
+      kubectl apply -f manifests-prod/repo-secret.yaml
+      kubectl apply -f manifests-prod/volumes.yaml 
+      kubectl apply -f manifests-prod/myapp.yaml
+
+
+deploy_prod:
+  rules:
+    - if: '$PIPELINE_TYPE == "PROD"'
+      when: on_success
+    - when: never
+  stage: deploy_prod
+  needs:
+    - check_manifests_prod
+  tags:
+    - image-test
+  image: 
+    name: matheustux/kubectl:1.0
+  before_script:
+    - |
+      cat $KUBENEXT > /config
+      export KUBECONFIG=/config
+  script:
+    - |
+      echo -e "\e[34;1mATUALIZANDO VERSÃO DA IMAGEM\e[m"
+
+      sed -ri "s|fastapi:.*|fastapi:${TAG}|" manifests/myapp.yaml
+      kubectl apply -k manifests-prod/
+  after_script:
+    - |
+      if [[ $CI_JOB_STATUS == 'success' ]]; then 
+        echo -e "\e[34;1mDEPLOY EM PRODUÇÃO EXECUTADO COM SUCESSO!!!/e[m"
+      else
+        echo -e "\e[31;1mERRO AO REALIZAR DEPLOY!\e[m"
+      fi
